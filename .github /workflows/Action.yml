@@ -1,0 +1,77 @@
+name: Kernel Building 
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+ 
+    - name: Get date
+      id: rundate
+      run: sudo rm /etc/localtime && sudo ln -s /usr/share/zoneinfo/Asia/Jakarta /etc/localtime && echo "REPO_DATE=`date`" >> $GITHUB_OUTPUT
+    
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y glibc-source libghc-libyaml-dev libyaml-dev binutils-aarch64-linux-gnu \
+        binutils-arm-linux-gnueabi binutils device-tree-compiler libtfm-dev libelf-dev cpio kmod nano bc \
+        bison ca-certificates curl flex gcc git libc6-dev aria2 libssl-dev openssl python-is-python3 ssh wget \
+        zip zstd sudo make clang gcc-arm-linux-gnueabi software-properties-common build-essential \
+        libarchive-tools gcc-aarch64-linux-gnu python2    
+            
+    - name: Fetch Toolchains
+      run: | 
+       mkdir clang && curl  https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -RLO && tar -C clang/ -xf clang-*.tar.gz
+          
+    - name: Kernel Building 
+      run: |         
+        export PATH="${PWD}/clang/bin:${PATH}"
+        export ARCH=arm64 
+        export KBUILD_BUILD_USER=AmbaNob
+        export KBUILD_BUILD_HOST=Not-Gaming-Kernel
+        export KBUILD_COMPILER_STRING="${PWD}/clang"
+
+        make O=out ARCH=arm64 sweet_defconfig
+
+        Building () {
+        make -j$(nproc --all) O=out LLVM=1 LLVM_IAS=1 \
+        ARCH=arm64 \
+        CC=clang \
+        LD=ld.lld \
+        AR=llvm-ar \
+        AS=llvm-as \
+        NM=llvm-nm \
+        STRIP=llvm-strip \
+        OBJCOPY=llvm-objcopy \
+        OBJDUMP=llvm-objdump \
+        CROSS_COMPILE=aarch64-linux-gnu- \
+        CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        }          
+                            
+       Building 2>&1 | tee -a compile.log
+       
+    - name: Fetch AnyKernel3
+      run: |
+          git clone  --depth=1 https://github.com/basamaryan/AnyKernel3 -b master AnyKernel3
+          if [[ -f out/arch/arm64/boot/Image.gz-dtb ]]; then
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          fi
+          if [ -f out/arch/arm64/boot/dtbo.img ]; then
+            cp out/arch/arm64/boot/dtbo.img AnyKernel3/dtbo.img
+          fi
+          if [ -f out/arch/arm64/boot/dtb.img ]; then
+            cp out/arch/arm64/boot/dtb.img AnyKernel3/dtb.img
+          fi
+         
+    - name: Upload AnyKernel3
+      uses: actions/upload-artifact@v4
+      with:
+        name: AnyKernel3
+        path: AnyKernel3/*
+        compression-level: 9
