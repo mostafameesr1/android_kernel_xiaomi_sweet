@@ -1,0 +1,212 @@
+name: Build Kernels
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-susfs:
+    runs-on: ubuntu-latest
+    outputs: 
+      ksunextsusfsname: ${{ steps.prepareArtifacts.outputs.KSUNEXTsusfs }}
+
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+      with:
+        ref: lineage-22.1-susfs
+
+    - name: Update Environment
+      run: sudo apt update -y
+
+    - name: Install Dependencies
+      run: |
+        sudo apt install -y git-core gnupg build-essential zip \
+        curl libarchive-tools flex \
+        unzip python3 python3-pip python3-dev \
+        python-is-python3 libncurses-dev lzop \
+        patchelf git-lfs ripgrep wget
+
+    - name: Download LLVM
+      run: |
+        mkdir -p ~/LLVM/Clang-git
+        cd ~/LLVM/
+        curl -s https://raw.githubusercontent.com/ZyCromerZ/Clang/refs/heads/main/Clang-main-link.txt -o clang.txt
+        clang_link=$(cat clang.txt)
+        wget "$clang_link"
+        tar -xf $(basename "$clang_link") -C Clang-git/ || exit 1
+        rm -f $(basename "$clang_link")
+
+    - name: Build Kernel with KernelSU-Next+SuSFS
+      run: |
+        export PATH=$HOME/LLVM/Clang-git/bin:$PATH
+        rm -rf out
+        mkdir -p out
+        curl -LSs "https://raw.githubusercontent.com/XWOKU/KernelSU-Next/next/kernel/setup.sh" | bash -s next-susfs-4.19
+        make -j$(nproc --all) O=out \
+                              CC=clang \
+                              ARCH=arm64 \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              NM=llvm-nm \
+                              OBJDUMP=llvm-objdump \
+                              STRIP=llvm-strip \
+                              vendor/kona-perf_defconfig vendor/debugfs.config
+
+        make -j$(nproc --all) O=out \
+                              CC=clang \
+                              ARCH=arm64 \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              NM=llvm-nm \
+                              OBJDUMP=llvm-objdump \
+                              STRIP=llvm-strip
+
+        cp out/arch/arm64/boot/Image anykernel3/
+        cd anykernel3
+        sed -i 's/^kernel\.string=.*/kernel.string=KernelSU-Next LineageOS 22.1 kernel with SuSFS built by XWOKU/' anykernel.sh
+        zip -r9 "../LOS22.1-kebab-KSUNEXT-SuSFS-4.19-$(date '+%d.%m.%y-%H%M').zip" *
+        cd ..
+
+    - name: Prepare artifacts
+      id: prepareArtifacts
+      run: |
+        KSUNEXTsusfs=$(ls LOS22.1-kebab-KSUNEXT-SuSFS-4.19-*.zip | awk -F '(/|.zip)' '{print $1}')
+        echo "KSUNEXTsusfs=$KSUNEXTsusfs" >> $GITHUB_OUTPUT
+        unzip LOS22.1-kebab-KSUNEXT-SuSFS-4.19-*.zip -d KSUNEXTsusfs
+
+    - name: Upload kernel with KernelSU-Next+SuSFS
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.prepareArtifacts.outputs.KSUNEXTsusfs }}
+        path: "./KSUNEXTsusfs/*"
+
+  build-stock-ksunext:
+    runs-on: ubuntu-latest
+    needs: [build-susfs]
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+      with:
+        ref: lineage-22.1
+
+    - name: Update Environment
+      run: sudo apt update -y
+
+    - name: Install Dependencies
+      run: |
+        sudo apt install -y git-core gnupg build-essential zip \
+        curl libarchive-tools flex \
+        unzip python3 python3-pip python3-dev \
+        python-is-python3 libncurses-dev lzop \
+        patchelf git-lfs ripgrep wget
+
+    - name: Download LLVM
+      run: |
+        mkdir -p ~/LLVM/Clang-git
+        cd ~/LLVM/
+        curl -s https://raw.githubusercontent.com/ZyCromerZ/Clang/refs/heads/main/Clang-main-link.txt -o clang.txt
+        clang_link=$(cat clang.txt)
+        wget "$clang_link"
+        tar -xf $(basename "$clang_link") -C Clang-git/ || exit 1
+        rm -f $(basename "$clang_link")
+
+    - name: Build Stock Kernel
+      run: |
+        export PATH=$HOME/LLVM/Clang-git/bin:$PATH
+        rm -rf out
+        mkdir -p out
+        make -j$(nproc --all) O=out \
+                              CC=clang \
+                              ARCH=arm64 \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              NM=llvm-nm \
+                              OBJDUMP=llvm-objdump \
+                              STRIP=llvm-strip \
+                              vendor/kona-perf_defconfig vendor/debugfs.config
+
+        make -j$(nproc --all) O=out \
+                              CC=clang \
+                              ARCH=arm64 \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              NM=llvm-nm \
+                              OBJDUMP=llvm-objdump \
+                              STRIP=llvm-strip
+
+        cp out/arch/arm64/boot/Image anykernel3/
+        cd anykernel3
+        sed -i 's/^kernel\.string=.*/kernel.string=Stock LineageOS 22.1 kernel built by XWOKU/' anykernel.sh
+        zip -r9 "../LineageOS-22.1-kebab-4.19-$(date '+%d.%m.%y-%H%M').zip" *
+        cd ..
+
+    - name: Build Kernel with KernelSU-Next
+      run: |
+        export PATH=$HOME/LLVM/Clang-git/bin:$PATH
+        rm -rf out
+        mkdir -p out
+        curl -LSs "https://raw.githubusercontent.com/XWOKU/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        make -j$(nproc --all) O=out \
+                              CC=clang \
+                              ARCH=arm64 \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              NM=llvm-nm \
+                              OBJDUMP=llvm-objdump \
+                              STRIP=llvm-strip \
+                              vendor/kona-perf_defconfig vendor/debugfs.config
+
+        make -j$(nproc --all) O=out \
+                              CC=clang \
+                              ARCH=arm64 \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              NM=llvm-nm \
+                              OBJDUMP=llvm-objdump \
+                              STRIP=llvm-strip
+
+        cp out/arch/arm64/boot/Image anykernel3/
+        cd anykernel3
+        sed -i 's/^kernel\.string=.*/kernel.string=KernelSU-Next LineageOS 22.1 kernel built by XWOKU/' anykernel.sh
+        zip -r9 "../LOS22.1-kebab-KSUNEXT-4.19-$(date '+%d.%m.%y-%H%M').zip" *
+        cd ..
+
+    - name: Prepare artifacts
+      id: prepareArtifacts
+      run: |
+        Stock=$(ls LineageOS-22.1-kebab-4.19-*.zip | awk -F '(/|.zip)' '{print $1}')
+        echo "Stock=$Stock" >> $GITHUB_ENV
+        KSUNEXT=$(ls LOS22.1-kebab-KSUNEXT-4.19-*.zip | awk -F '(/|.zip)' '{print $1}')
+        echo "KSUNEXT=$KSUNEXT" >> $GITHUB_ENV
+        unzip LineageOS-22.1-kebab-4.19-*.zip -d Stock
+        unzip LOS22.1-kebab-KSUNEXT-4.19-*.zip -d KSUNEXT
+
+    - name: Upload Stock kernel
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.Stock }}
+        path: "./Stock/*"
+
+    - name: Upload kernel with KernelSU-Next
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.KSUNEXT }}
+        path: "./KSUNEXT/*"
+
+    - name: Download kernel with KSUNEXT+SuSFS
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.build-susfs.outputs.ksunextsusfsname }}
+        path: KSUNEXTsusfs
+
+    - name: Prepare kernel with SuSFS and KSUNEXT
+      run: |
+        cd KSUNEXTsusfs
+        zip -r9 "../${{ needs.build-susfs.outputs.ksunextsusfsname }}.zip" *
+
+    - name: Set current date as environment variable
+      run: echo "DATE=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+    - name: Create tag and release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: LOS Kernels ${{ env.DATE }}
+        tag_name: ${{ env.DATE }}
+        files: |
+          ${{ env.Stock }}.zip
+          ${{ env.KSUNEXT }}.zip
+          ${{ needs.build-susfs.outputs.ksunextsusfsname }}.zip
